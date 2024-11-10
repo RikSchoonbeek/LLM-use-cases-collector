@@ -1,12 +1,14 @@
 from datetime import datetime, timezone
 
+from openai import OpenAI
 from praw import Reddit
 from praw.reddit import Submission as PRAWSubmission
+from pydantic import BaseModel
 
 from django.conf import settings
 from django.db import transaction
 
-from core.use_cases import UseCase
+from core.services import Service
 from collector.models import (
     Comment,
     Redditor,
@@ -14,9 +16,9 @@ from collector.models import (
     Subreddit,
 )
 
-class CollectThreadsUseCase(UseCase):
+class CollectThreadsService(Service):
     """
-    Use case that collects all threads for configured subreddits and stores/updates them in the database.
+    Service that collects all threads for configured subreddits and stores/updates them in the database.
     """
 
     def execute(self):
@@ -261,3 +263,35 @@ class CollectThreadsUseCase(UseCase):
 
     def log_info(self, message: str):
         print(message)
+
+
+class UseCaseAnalysis(BaseModel):
+    contains_llm_use_case_info: bool
+    explanation: str
+
+
+class CheckSubmissionForLLMUseCaseInformationService(Service):
+    def execute(self, input_text: str):
+        client = OpenAI(api_key=settings.OPENAI_API_KEY)
+
+        completion = client.beta.chat.completions.parse(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Analyze the provided text to determine if it contains information about LLM use cases. Provide a brief explanation of what you found or why no use cases were present."
+                },
+                {
+                    "role": "user",
+                    "content": input_text
+                }
+            ],
+            response_format=UseCaseAnalysis,
+        )
+        
+        # Access the parsed response
+        result = completion.choices[0].message.parsed
+        return {
+            "contains_llm_use_case_info": result.contains_llm_use_case_info,
+            "explanation": result.explanation
+        }

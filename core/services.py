@@ -2,9 +2,9 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 
-class UseCase(ABC):
+class Service(ABC):
     """
-    Abstract base class for use cases that can be called like functions.
+    Abstract base class for services that can be called like functions.
     """
     
     def __call__(self, **kwargs) -> Any:
@@ -17,12 +17,12 @@ class UseCase(ABC):
     @abstractmethod
     def execute(self, **kwargs) -> Any:
         """
-        Main execution method to be implemented by concrete use cases.
+        Main execution method to be implemented by concrete services.
         
         Args:
-            **kwargs: Input parameters for the use case.
+            **kwargs: Input parameters for the service.
             
         Returns:
-            The result of the use case execution.
+            The result of the service execution.
         """
         pass

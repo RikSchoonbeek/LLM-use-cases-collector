@@ -26,6 +26,7 @@ class Subreddit(models.Model):
     def __str__(self):
         return f"{type(self).__name__}: {self.name}"
 
+
 class Submission(models.Model):
     reddit_id = models.CharField(max_length=50, unique=True)
     author = models.ForeignKey(Redditor, on_delete=models.CASCADE, blank=True, null=True)
