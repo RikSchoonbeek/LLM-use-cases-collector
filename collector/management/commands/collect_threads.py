@@ -1,6 +1,6 @@
 from django.core.management.base import BaseCommand
 
-from collector.services import CollectThreadsUseCase
+from collector.use_cases import CollectThreadsUseCase
 
 class Command(BaseCommand):
     help = "Collects and processes threads from the database"

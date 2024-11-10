@@ -1,10 +1,14 @@
 from django.db import models
 from mptt.models import MPTTModel, TreeForeignKey
-from django.utils import timezone
+
 
 class Redditor(models.Model):
     username = models.CharField(max_length=255, unique=True)
     created_utc = models.DateTimeField(null=True)
+
+    def __str__(self):
+        return f"{type(self).__name__}: {self.username}"
+
 
 class Subreddit(models.Model):
     name = models.CharField(max_length=255)
@@ -18,6 +22,9 @@ class Subreddit(models.Model):
     can_assign_link_flair = models.BooleanField(default=False)
     can_assign_user_flair = models.BooleanField(default=False)
     spoilers_enabled = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{type(self).__name__}: {self.name}"
 
 class Submission(models.Model):
     reddit_id = models.CharField(max_length=50, unique=True)
@@ -43,6 +50,10 @@ class Submission(models.Model):
     author_flair_text = models.CharField(max_length=255, blank=True, null=True)
     link_flair_text = models.CharField(max_length=255, blank=True, null=True)
     link_flair_template_id = models.CharField(max_length=255, blank=True, null=True)
+
+    def __str__(self):
+        return f"{type(self).__name__}: {self.title}"
+
 
 class Comment(MPTTModel):
     """
@@ -72,3 +83,6 @@ class Comment(MPTTModel):
 
     class MPTTMeta:
         order_insertion_by = ['created_utc']
+
+    def __str__(self):
+        return f"{type(self).__name__}: {self.body[:30]} ..."
