@@ -12,6 +12,9 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv()
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -37,6 +40,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django_celery_results",
     "mptt",
     "collector",
 ]
@@ -70,21 +74,6 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = "core.wsgi.application"
-
-
-# Database
-# https://docs.djangoproject.com/en/4.2/ref/settings/#databases
-
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'development',
-        'USER': 'development',
-        'PASSWORD': 'development',
-        'HOST': 'localhost',
-        'PORT': '5432',
-    }
-}
 
 
 # Password validation
@@ -133,3 +122,10 @@ REDDIT_API_CLIENT_SECRET = os.getenv("REDDIT_API_CLIENT_SECRET")
 REDDIT_ACCOUNT_USERNAME = os.getenv("REDDIT_ACCOUNT_USERNAME")
 REDDIT_ACCOUNT_PASSWORD = os.getenv("REDDIT_ACCOUNT_PASSWORD")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Celery
+
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = 'UTC'

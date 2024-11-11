@@ -1,9 +1,10 @@
 from datetime import datetime, timezone
+from typing import Dict, List, Any, Type
 
 from openai import OpenAI
 from praw import Reddit
 from praw.reddit import Submission as PRAWSubmission
-from pydantic import BaseModel
+from pydantic import BaseModel, create_model
 
 from django.conf import settings
 from django.db import transaction
@@ -11,9 +12,12 @@ from django.db import transaction
 from core.services import Service
 from collector.models import (
     Comment,
+    InformationToDetect,
     Redditor,
     Submission,
     Subreddit,
+    PydanticResponseFormat,
+    PydanticResponseFormatField,
 )
 
 class CollectThreadsService(Service):
@@ -98,9 +102,9 @@ class CollectThreadsService(Service):
             is_original_content=submission.is_original_content,
             is_self=submission.is_self,
             permalink=submission.permalink,
-            author_flair_text=submission.author_flair_text,
-            link_flair_text=submission.link_flair_text,
-            link_flair_template_id=submission.link_flair_template_id,
+            author_flair_text=getattr(submission, "author_flair_text", None),
+            link_flair_text=getattr(submission, "link_flair_text", None),
+            link_flair_template_id=getattr(submission, "link_flair_template_id", None),
         )
 
     def _update_submission(self, instance: Submission, submission: PRAWSubmission) -> None:
@@ -126,9 +130,9 @@ class CollectThreadsService(Service):
         instance.is_original_content = submission.is_original_content
         instance.is_self = submission.is_self
         instance.permalink = submission.permalink
-        instance.author_flair_text = submission.author_flair_text
-        instance.link_flair_text = submission.link_flair_text
-        instance.link_flair_template_id = submission.link_flair_template_id
+        instance.author_flair_text = getattr(submission, "author_flair_text", None)
+        instance.link_flair_text = getattr(submission, "link_flair_text", None)
+        instance.link_flair_template_id = getattr(submission, "link_flair_template_id", None)
         
         instance.save()
 
@@ -188,7 +192,7 @@ class CollectThreadsService(Service):
             created_utc=comment_created_dt_utc,
             score=comment.score,
             parent=parent_comment,
-            distinguished=comment.distinguished is not None,
+            distinguished=comment.distinguished,
             edited_utc=edited_dt_utc,
             stickied=comment.stickied,
             saved=comment.saved,
@@ -207,7 +211,7 @@ class CollectThreadsService(Service):
         instance.body_html = comment.body_html
         instance.score = comment.score
         instance.parent = parent_comment
-        instance.distinguished = comment.distinguished is not None
+        instance.distinguished = comment.distinguished
         instance.edited_utc = edited_dt_utc
         instance.stickied = comment.stickied
         instance.saved = comment.saved
@@ -270,13 +274,72 @@ class UseCaseAnalysis(BaseModel):
     explanation: str
 
 
-class CheckSubmissionForLLMUseCaseInformationService(Service):
+class CheckSubmissionForInformationService(Service):
     def execute(self, input_text: str):
+        # Goal: I want to know which submission (and comments) are judged to contain specific info
+        # Maybe I can create a Model class that represents a check for specific information in a
+        # source.
+        # This model could contain instructions that can be converted into a pydantic BaseModel
+        # to be used for a question like the one below.
+        # The model can also contain a foreignkey to a submission, if the submission was judged
+        # to contain the information specified in the Model
+        # TODO steps:
+        # 1 
+
+        # x I 
+
         client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
-        completion = client.beta.chat.completions.parse(
-            model="gpt-4o-mini",
-            messages=[
+        for info_to_detect in InformationToDetect.objects.all():
+            messages = self.get_initial_llm_messages(info_to_detect, input_text)
+            response_format = self.create_pydantic_model(format_instance=info_to_detect.response_format)
+            completion = client.beta.chat.completions.parse(
+                model="gpt-4o-mini",
+                messages=messages,
+                response_format=response_format,
+            )
+            
+            # Access the parsed response
+            result = completion.choices[0].message.parsed
+            return {
+                "contains_llm_use_case_info": result.contains_llm_use_case_info,
+                "explanation": result.explanation
+            }
+        
+    def get_python_type(self, data_type: str) -> Type:
+        type_mapping = {
+            'str': str,
+            'int': int,
+            'float': float,
+            'bool': bool,
+            'dict': Dict[str, Any],
+            'list': list,
+            'tuple': tuple,
+            'set': set,
+            'none': None
+        }
+        return type_mapping.get(data_type, str)
+
+    def create_pydantic_model(self, format_instance: PydanticResponseFormat) -> Type[BaseModel]:
+        fields = PydanticResponseFormatField.objects.filter(base_model=format_instance)
+        
+        field_definitions = {
+            field.name: self.get_python_type(field.data_type) for field in fields
+        }
+        
+        model = create_model(
+            format_instance.name,
+            **field_definitions,
+            __base__=BaseModel
+        )
+        
+        return model
+
+    
+    def get_initial_llm_messages(self, info_to_detect: InformationToDetect, input_text) -> List[Dict]:
+        """
+        example response:
+        messages=[
                 {
                     "role": "system",
                     "content": "Analyze the provided text to determine if it contains information about LLM use cases. Provide a brief explanation of what you found or why no use cases were present."
@@ -285,13 +348,15 @@ class CheckSubmissionForLLMUseCaseInformationService(Service):
                     "role": "user",
                     "content": input_text
                 }
-            ],
-            response_format=UseCaseAnalysis,
-        )
-        
-        # Access the parsed response
-        result = completion.choices[0].message.parsed
-        return {
-            "contains_llm_use_case_info": result.contains_llm_use_case_info,
-            "explanation": result.explanation
-        }
+            ]
+        """
+        return [
+            {
+                "role": "system",
+                "content": info_to_detect.llm_instruction_message,
+            },
+            {
+                "role": "user",
+                "content": input_text
+            }
+        ]

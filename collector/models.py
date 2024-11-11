@@ -23,6 +23,8 @@ class Subreddit(models.Model):
     can_assign_user_flair = models.BooleanField(default=False)
     spoilers_enabled = models.BooleanField(default=True)
 
+    modified_dt = models.DateTimeField(auto_now=True)
+
     def __str__(self):
         return f"{type(self).__name__}: {self.name}"
 
@@ -41,7 +43,7 @@ class Submission(models.Model):
     over_18 = models.BooleanField(default=False)
     spoiler = models.BooleanField(default=False)
     stickied = models.BooleanField(default=False)
-    distinguished = models.BooleanField(default=False, null=True)
+    distinguished = models.CharField(max_length=50, null=True, blank=True)
     edited_utc = models.DateTimeField(blank=True, null=True)
     locked = models.BooleanField(default=False)
     saved = models.BooleanField(default=False)
@@ -51,6 +53,8 @@ class Submission(models.Model):
     author_flair_text = models.CharField(max_length=255, blank=True, null=True)
     link_flair_text = models.CharField(max_length=255, blank=True, null=True)
     link_flair_template_id = models.CharField(max_length=255, blank=True, null=True)
+
+    modified_dt = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"{type(self).__name__}: {self.title}"
@@ -75,15 +79,71 @@ class Comment(MPTTModel):
         blank=True,
         related_name='children'
     )
-    distinguished = models.BooleanField(default=False)
+    distinguished = models.CharField(max_length=50, null=True, blank=True)
     edited_utc = models.DateTimeField(blank=True, null=True)
     stickied = models.BooleanField(default=False)
     saved = models.BooleanField(default=False)
     is_submitter = models.BooleanField(default=False)
     permalink = models.CharField(max_length=500)
+    
+    modified_dt = models.DateTimeField(auto_now=True)
 
     class MPTTMeta:
         order_insertion_by = ['created_utc']
 
     def __str__(self):
         return f"{type(self).__name__}: {self.body[:30]} ..."
+    
+
+class InformationToDetect(models.Model):
+    llm_instruction_message = models.TextField(
+        help_text="Message that will be provided to the LLM model to instruct it what to do."
+    )
+    response_format = models.ForeignKey("collector.PydanticResponseFormat", on_delete=models.CASCADE)
+
+
+class DetectedInformation(models.Model):
+    submission = models.ForeignKey(Submission, on_delete=models.CASCADE)
+    information_tsf = models.ForeignKey(InformationToDetect, on_delete=models.CASCADE)
+    created_dt = models.DateTimeField(auto_now_add=True)
+    modified_dt = models.DateTimeField(auto_now=True)
+
+
+class PydanticResponseFormat(models.Model):
+    """
+    Model representing a pydantic.BaseModel that are used to instruct OpenAI models to format
+    their answer in a specific format.
+    """
+    name = models.CharField(max_length=100)
+    created_dt = models.DateTimeField(auto_now_add=True)
+    modified_dt = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.name}"
+
+
+class PydanticResponseFormatField(models.Model):
+    FIELD_TYPE_CHOICES = [
+        ('str', 'String'),
+        ('int', 'Integer'),
+        ('float', 'Float'),
+        ('bool', 'Boolean'),
+        ('dict', 'Dictionary'),
+        ('list', 'List'),
+        ('tuple', 'Tuple'),
+        ('set', 'Set'),
+        ('none', 'None')
+    ]
+
+    base_model = models.ForeignKey(PydanticResponseFormat, on_delete=models.CASCADE)
+    name = models.CharField(max_length=100)
+    data_type = models.CharField(
+        max_length=10,
+        choices=FIELD_TYPE_CHOICES,
+        help_text='Select the Python data type'
+    )
+    created_dt = models.DateTimeField(auto_now_add=True)
+    modified_dt = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.name}: {self.get_data_type_display()}"

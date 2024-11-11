@@ -1,6 +1,12 @@
-Django==4.2
-psycopg2-binary
-praw
-openai
+celery
+django-celery-results
 django-mptt
+Django==4.2
+openai
+praw
+psycopg2-binary
 pydantic
+redis
+
+# for develop only:
+python-dotenv
