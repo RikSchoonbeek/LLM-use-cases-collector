@@ -1,6 +1,5 @@
 .git
 .gitignore
-.vscode
 __pycache__
 *.pyc
 *.pyo
@@ -9,3 +8,10 @@ __pycache__
 venv/
 README.md
 .env
+
+# VS Code settings and workspace storage
+.vscode/
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+.vscode/*.code-workspace

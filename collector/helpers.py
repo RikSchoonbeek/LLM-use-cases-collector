@@ -3,7 +3,7 @@ import time
 import traceback
 import prawcore
 
-
+# 1200 seconds == 20 min
 def call_function_repeatedly(function, pauze_seconds = 1200):
     while True:
         try:

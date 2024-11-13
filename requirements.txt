@@ -1,3 +1,4 @@
+anthropic
 celery
 django-celery-results
 django-mptt

@@ -1,8 +1,10 @@
 from datetime import datetime, timezone
+import time
 from typing import Dict, List, Any, Type
 
-from openai import OpenAI
+import anthropic
 from praw import Reddit
+import prawcore
 from praw.reddit import Submission as PRAWSubmission
 from pydantic import BaseModel, create_model
 
@@ -20,9 +22,9 @@ from collector.models import (
     PydanticResponseFormatField,
 )
 
-class CollectThreadsService(Service):
+class CollectSubmissionsService(Service):
     """
-    Service that collects all threads for configured subreddits and stores/updates them in the database.
+    Service that collects all submissions for configured subreddits and stores/updates them in the database.
     """
 
     def execute(self):
@@ -44,12 +46,46 @@ class CollectThreadsService(Service):
         subreddit = self.reddit_interface.subreddit(subreddit_instance.name)
         for submission in subreddit.new():
             self.log_info(f"  Processing Submission: {submission.title}")
+
+            try:
+                # Atomic transaction per submission guarantees complete submission information storage
+                with transaction.atomic():
+                    submission_instance = self.process_submission(submission, subreddit_instance)
+                    self.process_submission_comments(submission, submission_instance)
+                    self.log_info(f"  Finished processing Submission\n")
+            except prawcore.exceptions.TooManyRequests as e:
+                error_raised = True
+
             
-            # Atomic transaction per submission guarantees complete submission information storage
-            with transaction.atomic():
-                submission_instance = self.process_submission(submission, subreddit_instance)
-                self.process_submission_comments(submission, submission_instance)
-                self.log_info(f"  Finished processing Submission\n")
+            # Each submission gets 5 attempts. prawcore.exceptions.TooManyRequests Exceptions sometimes
+            # happen, and this mechanic helps give each submission 5 attempts, retrying after
+            error_raised = False
+            retry_attempts = 5
+            while True:
+                try:
+                    # Atomic transaction per submission guarantees complete submission information storage
+                    with transaction.atomic():
+                        submission_instance = self.process_submission(submission, subreddit_instance)
+                        self.process_submission_comments(submission, submission_instance)
+                        self.log_info(f"  Finished processing Submission\n")
+                        break
+                        # If no error occured, this loop is done. The rest is only a retry mechanism for errors.
+                except prawcore.exceptions.TooManyRequests as e:
+                    self.log_info("  prawcore.exceptions.TooManyRequests raised during self.process_submission_comments(...) execution\n")
+                    
+                    # If error wasn't previously raised the retries are initiated. Each retry is detracted after
+                    # that and the exception is re-raised when retries are gone.
+                    if not error_raised:
+                        retry_attempts = 5
+                    elif retry_attempts == 0:
+                        raise e
+                        # This will also break the while loop
+                    else:
+                        retry_attempts -= 1
+                    
+                    self.log_info(f"   Waiting 15 seconds before next retry - retries left: {attempts}")
+                    time.sleep(15)
+                    self.log_info("   Retry started")
 
     def process_submission(self, submission: PRAWSubmission, subreddit_instance: Subreddit) -> Submission:
         """Process a submission, creating or updating it as needed."""
@@ -72,7 +108,7 @@ class CollectThreadsService(Service):
         except Submission.DoesNotExist:
             self.log_info("  Creating new submission")
             submission_instance = self._create_submission(submission, subreddit_instance)
-        
+
         return submission_instance
 
     def _create_submission(self, submission: PRAWSubmission, subreddit_instance: Subreddit) -> Submission:
@@ -275,36 +311,101 @@ class UseCaseAnalysis(BaseModel):
 
 
 class CheckSubmissionForInformationService(Service):
-    def execute(self, input_text: str):
-        # Goal: I want to know which submission (and comments) are judged to contain specific info
-        # Maybe I can create a Model class that represents a check for specific information in a
-        # source.
-        # This model could contain instructions that can be converted into a pydantic BaseModel
-        # to be used for a question like the one below.
-        # The model can also contain a foreignkey to a submission, if the submission was judged
-        # to contain the information specified in the Model
-        # TODO steps:
-        # 1 
+    def execute(self, submissions: List[Submission] = None):
+        client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
-        # x I 
-
-        client = OpenAI(api_key=settings.OPENAI_API_KEY)
+        found_count = 0
+        total_processed = 0
 
         for info_to_detect in InformationToDetect.objects.all():
-            messages = self.get_initial_llm_messages(info_to_detect, input_text)
-            response_format = self.create_pydantic_model(format_instance=info_to_detect.response_format)
-            completion = client.beta.chat.completions.parse(
-                model="gpt-4o-mini",
-                messages=messages,
-                response_format=response_format,
-            )
+            for submission in submissions:
+                print(f"processing submission with id: {submission.id}")
+                submission_text = self.get_submission_text(submission)
+                response_format = self.create_pydantic_model(format_instance=info_to_detect.response_format)
+                text_analysis_schema = response_format.model_json_schema()
+    
+                tools = [
+                    {
+                        "name": "build_text_analysis_result",
+                        "description": "build the text analysis object",
+                        "input_schema": text_analysis_schema
+                    }
+                ]
+
+                message = client.messages.create(
+                    system=info_to_detect.llm_instruction_message,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": submission_text,
+                        }
+                    ],
+                    model="claude-3-haiku-20240307",
+                    # max_tokens: (1200) Maximum length of model's response. Higher values allow for longer, more detailed responses.
+                    max_tokens=1200,
+                    # temperature: (0.2) Controls response randomness/creativity. 0.2 is good for accurate, predictable outputs.
+                    temperature=0.2,
+                    tools=tools,
+                    tool_choice={"type": "tool", "name": "build_text_analysis_result"}
+                )
+
+                function_call = message.content[0].input
+                formatted_response =  response_format(**function_call)
+                total_processed += 1
+
+                if formatted_response.contains_relevant_examples:
+                    found_count += 1
+                
+                len([])
+
+
+    def get_submission_text(self, submission: Submission) -> str:
+        """
+        Format a Reddit submission and its comments into a readable text conversation.
+        
+        Args:
+            submission: A Submission instance with prefetched comments
             
-            # Access the parsed response
-            result = completion.choices[0].message.parsed
-            return {
-                "contains_llm_use_case_info": result.contains_llm_use_case_info,
-                "explanation": result.explanation
-            }
+        Returns:
+            str: Formatted text representation of the thread
+        """
+        # Initialize output with submission details
+        output = [
+            f"Title: {submission.title}\n",
+            f"Posted by u/{submission.author.username if submission.author else '[deleted]'}\n"
+        ]
+        
+        # Add submission text if it exists
+        if submission.selftext.strip():
+            output.append(f"\n{submission.selftext}\n")
+        
+        output.append("\n" + "-"*50 + "\nComments:\n")
+        
+        def format_comment(comment, depth=0):
+            """Helper function to recursively format comments with proper indentation"""
+            indent = "    " * depth
+            author = comment.author.username if comment.author else '[deleted]'
+            
+            # Format the comment with indentation
+            comment_text = f"{indent}u/{author}:\n{indent}{comment.body}\n"
+            
+            # Recursively format child comments
+            for child in comment.get_children():
+                comment_text += "\n" + format_comment(child, depth + 1)
+                
+            return comment_text
+        
+        # Get all root comments (comments without parents)
+        root_comments = submission.comments.filter(parent=None).order_by('created_utc')
+        
+        # Format each comment tree
+        for comment in root_comments:
+            output.append(format_comment(comment))
+            output.append("\n")
+        
+        return "".join(output)
+
+
         
     def get_python_type(self, data_type: str) -> Type:
         type_mapping = {
@@ -324,7 +425,8 @@ class CheckSubmissionForInformationService(Service):
         fields = PydanticResponseFormatField.objects.filter(base_model=format_instance)
         
         field_definitions = {
-            field.name: self.get_python_type(field.data_type) for field in fields
+            field.name: (self.get_python_type(field.data_type), ...) 
+            for field in fields
         }
         
         model = create_model(
@@ -334,29 +436,4 @@ class CheckSubmissionForInformationService(Service):
         )
         
         return model
-
     
-    def get_initial_llm_messages(self, info_to_detect: InformationToDetect, input_text) -> List[Dict]:
-        """
-        example response:
-        messages=[
-                {
-                    "role": "system",
-                    "content": "Analyze the provided text to determine if it contains information about LLM use cases. Provide a brief explanation of what you found or why no use cases were present."
-                },
-                {
-                    "role": "user",
-                    "content": input_text
-                }
-            ]
-        """
-        return [
-            {
-                "role": "system",
-                "content": info_to_detect.llm_instruction_message,
-            },
-            {
-                "role": "user",
-                "content": input_text
-            }
-        ]

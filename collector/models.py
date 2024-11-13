@@ -1,6 +1,8 @@
 from django.db import models
 from mptt.models import MPTTModel, TreeForeignKey
 
+from core.models import TaskRun
+
 
 class Redditor(models.Model):
     username = models.CharField(max_length=255, unique=True)
@@ -147,3 +149,10 @@ class PydanticResponseFormatField(models.Model):
 
     def __str__(self):
         return f"{self.name}: {self.get_data_type_display()}"
+    
+
+class CollectSubmissionTaskRun(TaskRun):
+    """
+    Represents a collect_reddit_submissions celery task that was initiated at a given moment.
+    """
+    pass

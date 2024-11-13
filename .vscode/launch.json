@@ -17,11 +17,11 @@
             "program": "${workspaceFolder}/manage.py"
         },
         {
-            "name": "Management command: collect_threads",
+            "name": "Management command: check_subs",
             "type": "debugpy",
             "request": "launch",
             "args": [
-                "collect_threads"
+                "check_subs"
             ],
             "django": true,
             "autoStartBrowser": false,
